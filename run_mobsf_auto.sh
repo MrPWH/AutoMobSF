@@ -1,18 +1,5 @@
 #!/bin/bash
 
-echo "==========================================="
-echo "  MobSF Auto Detector & Docker Runner"
-echo "==========================================="
-
-# --- Detect ADB Path ---
-ADB=$(which adb)
-if [[ -z "$ADB" ]]; then
-    echo "[!] adb not found! Install platform-tools first."
-    exit 1
-fi
-
-echo "[+] Using ADB: $ADB"
-
 # --- Detect running emulator/device ---
 echo "[+] Detecting Android emulator/device..."
 
@@ -32,38 +19,48 @@ if [[ "$DEVICE_ID" == *":"* ]]; then
     EMULATOR_HOST=$(echo "$DEVICE_ID" | cut -d: -f1)
     EMULATOR_PORT=$(echo "$DEVICE_ID" | cut -d: -f2)
 else
-    # Real device (in WiFi mode)
+    # Real device (WiFi mode)
     echo "[+] Real device detected, reading wlan0..."
     EMULATOR_HOST=$(adb shell ip -o -4 addr show wlan0 | awk '{print $4}' | cut -d/ -f1)
     EMULATOR_PORT="5555"
 fi
 
+DOCKER_HOST="$EMULATOR_HOST:$EMULATOR_PORT"
+
 echo "[+] Emulator Host: $EMULATOR_HOST"
 echo "[+] Emulator Port: $EMULATOR_PORT"
-
-# Fix for Docker internal networking
-DOCKER_HOST="host.docker.internal:$EMULATOR_PORT"
 echo "[+] Docker-accessible device address: $DOCKER_HOST"
+
+# --- Prepare config.py ---
+CONFIG_DIR=~/mobsf_config
+CONFIG_FILE="$CONFIG_DIR/config.py"
+
+mkdir -p "$CONFIG_DIR"
+
+# Create or overwrite config.py
+cat > "$CONFIG_FILE" <<EOL
+# Auto-generated MobSF config
+MOBSF_ANALYZER_IDENTIFIER = "$DOCKER_HOST"
+EOL
+
+echo "[+] config.py created at $CONFIG_FILE with MOBSF_ANALYZER_IDENTIFIER=$DOCKER_HOST"
 
 # --- Stop old MobSF ---
 echo "[+] Removing old MobSF container (if exists)..."
 docker rm -f mobsf >/dev/null 2>&1
 
-# --- Start MobSF ---
-echo "[+] Starting MobSF with ANALYZER_IDENTIFIER=$DOCKER_HOST"
-
+# --- Start MobSF with only config.py mounted ---
+echo "[+] Starting MobSF container..."
 docker run -d \
   --name mobsf \
   -p 8000:8000 \
-  -v ~/mobsf_data:/home/mobsf/.MobSF \
-  -e MOBSF_ANALYZER_IDENTIFIER="$DOCKER_HOST" \
+  -v "$CONFIG_FILE":/home/mobsf/.MobSF/config.py \
   opensecurity/mobile-security-framework-mobsf
 
 sleep 4
 
 # --- Connect ADB inside Docker ---
 echo "[+] Connecting emulator inside MobSF container..."
-
 docker exec mobsf adb connect "$DOCKER_HOST"
 
 echo "[+] Checking devices inside container:"
